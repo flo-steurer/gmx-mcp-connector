@@ -1,0 +1,36 @@
+services:
+  awita-mail:
+    build:
+      context: .
+    image: awita-mail-mcp:local
+    restart: unless-stopped
+    env_file:
+      - .env
+    expose:
+      - "8000"
+    volumes:
+      - awita-mail-data:/data
+    networks:
+      - traefik
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    labels:
+      traefik.enable: "${TRAEFIK_ENABLE:-false}"
+      traefik.http.routers.awita-mail.rule: "Host(`${MCP_HOSTNAME}`)"
+      traefik.http.routers.awita-mail.entrypoints: "${TRAEFIK_ENTRYPOINT:-websecure}"
+      traefik.http.routers.awita-mail.tls: "true"
+      traefik.http.routers.awita-mail.tls.certresolver: "${TRAEFIK_CERTRESOLVER:-letsencrypt}"
+      traefik.http.services.awita-mail.loadbalancer.server.port: "8000"
+
+volumes:
+  awita-mail-data:
+
+networks:
+  traefik:
+    external: true
+    name: "${TRAEFIK_NETWORK:-proxy}"

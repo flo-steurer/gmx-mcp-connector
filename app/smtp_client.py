@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import smtplib
+from copy import deepcopy
 from dataclasses import dataclass
 from email.message import EmailMessage
-from email.policy import default
 
 from app.config import Settings
 
@@ -39,14 +39,9 @@ class SMTPClient:
             raise SMTPDeliveryError("SMTP connectivity check failed", retryable=True) from exc
 
     def send(self, message: EmailMessage, recipients: list[str]) -> SMTPResult:
-        outbound = EmailMessage(policy=default)
-        for key, value in message.items():
-            if key.casefold() != "bcc":
-                outbound[key] = value
-        if message.is_multipart():
-            outbound.set_payload(message.get_payload())
-        else:
-            outbound.set_content(message.get_content())
+        outbound = deepcopy(message)
+        if "Bcc" in outbound:
+            del outbound["Bcc"]
         phase = "connect"
         try:
             with smtplib.SMTP(
