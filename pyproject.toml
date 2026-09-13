@@ -9,6 +9,7 @@ description = "Authenticated, draft-first MCP server for a GMX business mailbox"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
+  "certifi==2026.7.22",
   "mcp==2.2.0",
   "pydantic==2.12.5",
   "starlette==0.48.0",

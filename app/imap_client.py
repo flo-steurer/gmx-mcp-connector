@@ -257,7 +257,10 @@ class IMAPClient:
         descriptor, raw_headers = self._extract_fetch(data)
         message = parse_message(raw_headers)
         flags_match = re.search(rb"FLAGS \(([^)]*)\)", descriptor, re.IGNORECASE)
-        flags = {token.casefold() for token in (flags_match.group(1).split() if flags_match else [])}
+        flags = {
+            token.decode("ascii", errors="replace").casefold()
+            for token in (flags_match.group(1).split() if flags_match else [])
+        }
         upper = descriptor.upper()
         has_attachments = b"ATTACHMENT" in upper or b"FILENAME" in upper
         return EmailMetadata(
@@ -268,7 +271,7 @@ class IMAPClient:
             recipients=addresses(message, "To", "Cc"),
             subject=header(message, "Subject"),
             date=parsed_date(message),
-            unread=b"\\seen" not in flags,
+            unread="\\seen" not in flags,
             has_attachments=has_attachments,
             message_id=header(message, "Message-ID") or None,
         )
@@ -308,9 +311,18 @@ class IMAPClient:
             value and not value.isascii() for value in (text, sender, recipient, subject)
         ) else None
         status, data = selected.connection.uid("SEARCH", charset, *criteria)
-        if status != "OK" or not data:
+        if status != "OK":
             raise MailboxError("Mailbox search failed")
-        uids = [int(value) for value in data[0].split() if value.isdigit()]
+        # IMAP servers are allowed to return an empty SEARCH response as either
+        # ``[b""]`` or ``[None]``.  Treat both forms as an empty mailbox rather
+        # than assuming the first response item is bytes and calling ``split``
+        # on it.  This is seen with GMX when a folder has no matching messages.
+        payload = data[0] if data else b""
+        if payload is None:
+            return []
+        if not isinstance(payload, (bytes, str)):
+            raise MailboxError("Mailbox search returned invalid data")
+        uids = [int(value) for value in payload.split() if value.isdigit()]
         uids = list(reversed(uids[-limit:]))
         return [self._metadata(selected, uid) for uid in uids]
 

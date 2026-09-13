@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import traceback
 import uuid
 from collections.abc import Callable
 from datetime import date
@@ -18,6 +19,7 @@ from app import __version__
 from app.audit import AuditLedger
 from app.config import Settings
 from app.imap_client import IMAPClient, MailboxError
+from app.logging_config import configure_logging
 from app.mail_service import MailService, ValidationError
 from app.models import (
     AttachmentMetadata,
@@ -67,16 +69,32 @@ def _call(operation: str, function: Callable[[], T]) -> T:
             extra={"operation": operation, "correlation_id": correlation_id, "outcome": "rejected"},
         )
         raise ToolError(str(exc)) from None
-    except Exception:
+    except Exception as exc:
+        traceback_frames = traceback.extract_tb(exc.__traceback__)
+        error_location = "unknown"
+        if traceback_frames:
+            frame = traceback_frames[-1]
+            error_location = f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}:{frame.name}"
         logger.exception(
             "mail operation failed",
-            extra={"operation": operation, "correlation_id": correlation_id, "outcome": "error"},
+            extra={
+                "operation": operation,
+                "correlation_id": correlation_id,
+                "outcome": "error",
+                "error_type": type(exc).__name__,
+                "error_location": error_location,
+            },
         )
         raise ToolError(f"{operation} failed; reference {correlation_id}") from None
 
 
 def build_mcp(service: MailService) -> MCPServer:
-    mcp = MCPServer("awita-mail", instructions=INSTRUCTIONS, version=__version__)
+    mcp = MCPServer(
+        "awita-mail",
+        instructions=INSTRUCTIONS,
+        version=__version__,
+        log_level=service.settings.log_level,  # type: ignore[arg-type]
+    )
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health(_: Request) -> Response:
@@ -187,7 +205,7 @@ def build_mcp(service: MailService) -> MCPServer:
         subject: str | None = None,
         body: str | None = None,
     ) -> DraftResult:
-        """Replace fields on a verified draft only, preserving threading existing attachmentsments and threading."""
+        """Replace fields on a verified draft only, preserving existing attachments and threading."""
         return _call(
             "update_draft",
             lambda: service.update_draft(
@@ -233,6 +251,7 @@ def create_app(settings: Settings | None = None, service: MailService | None = N
             AuditLedger(settings.audit_db_path),
         )
     mcp = build_mcp(service)
+    configure_logging(settings.log_level)
     security = TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
         allowed_hosts=settings.allowed_hosts,

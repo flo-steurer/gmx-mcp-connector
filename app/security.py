@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hmac
 import json
-from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -26,7 +25,7 @@ class BearerAuthMiddleware:
         self.authenticator = authenticator
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not scope.get("path", "").startswith("/mcp"):
+        if scope["type"] != "http" or scope.get("path", "") not in {"/mcp", "/mcp/"}:
             await self.app(scope, receive, send)
             return
         headers = {key.lower(): value for key, value in scope.get("headers", [])}

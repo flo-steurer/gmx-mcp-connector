@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 import re
 import ssl
@@ -9,6 +10,29 @@ from pathlib import Path
 
 class ConfigurationError(ValueError):
     """Raised when startup configuration is missing or unsafe."""
+
+
+def _load_dotenv() -> None:
+    """Load simple KEY=VALUE entries from the project .env without adding a dependency."""
+    path = Path.cwd() / ".env"
+    if not path.is_file():
+        return
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise ConfigurationError("Unable to read .env") from exc
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        name = name.strip()
+        value = value.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ.setdefault(name, value)
 
 
 def _secret(name: str) -> str:
@@ -78,15 +102,53 @@ class Settings:
 
     @property
     def allowed_origins(self) -> list[str]:
-        return [f"https://{self.mcp_hostname}", f"https://{self.mcp_hostname}:*"]
+        return [
+            f"https://{self.mcp_hostname}",
+            f"https://{self.mcp_hostname}:*",
+            "http://localhost:*",
+            "http://127.0.0.1:*",
+        ]
 
     def tls_context(self) -> ssl.SSLContext:
         context = ssl.create_default_context()
         context.minimum_version = ssl.TLSVersion.TLSv1_2
+        # Some python.org macOS installations have no CA bundle configured,
+        # even though the operating system's OpenSSL tooling is fully trusted.
+        # Fall back to certifi only when the interpreter loaded no CA certs;
+        # otherwise retain the platform trust store (including enterprise CAs).
+        if not context.get_ca_certs():
+            candidates: list[str] = []
+            configured = os.getenv("SSL_CERT_FILE")
+            if configured:
+                candidates.append(configured)
+            try:
+                certifi = importlib.import_module("certifi")
+            except ModuleNotFoundError:
+                certifi = None
+            if certifi is not None:
+                where = getattr(certifi, "where", None)
+                if callable(where):
+                    candidates.append(str(where()))
+            candidates.extend(
+                [
+                    "/etc/ssl/cert.pem",
+                    "/etc/ssl/certs/ca-certificates.crt",
+                    "/opt/homebrew/etc/openssl@3/cert.pem",
+                    "/usr/local/etc/openssl@3/cert.pem",
+                ]
+            )
+            for cafile in dict.fromkeys(candidates):
+                try:
+                    context.load_verify_locations(cafile=cafile)
+                except (OSError, ssl.SSLError):
+                    continue
+                if context.get_ca_certs():
+                    break
         return context
 
     @classmethod
     def from_env(cls) -> Settings:
+        _load_dotenv()
         token = _secret("MCP_API_TOKEN")
         if len(token.encode()) < 32 or token.lower() in {
             "change-me",
@@ -124,8 +186,6 @@ class Settings:
             ),
             max_recipients=_int("MAX_RECIPIENTS", 20, 1, 50),
             max_subject_chars=_int("MAX_SUBJECT_CHARS", 255, 1, 998),
-            max_draft_body_chars=_int(
-                "MAX_DRAFT_BODY_CHARS", 100_000, 1_000, 250_000
-            ),
+            max_draft_body_chars=_int("MAX_DRAFT_BODY_CHARS", 100_000, 1_000, 250_000),
             audit_db_path=os.getenv("AUDIT_DB_PATH", "/data/audit.db"),
         )

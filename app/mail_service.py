@@ -4,7 +4,7 @@ import imaplib
 import re
 from copy import deepcopy
 from datetime import date
-from email.message import EmailMessage, Message
+from email.message import EmailMessage
 from email.policy import default
 from email.utils import formatdate, getaddresses, make_msgid
 
@@ -410,22 +410,42 @@ class MailService:
                 )
                 return SendResult(success=False, status=outcome, message_id=message_id)
             sent_copy = "existing"
-            if not self.imap.contains_message_id(connection, sent_folder, message_id):
-                outbound = deepcopy(message)
-                if "Bcc" in outbound:
-                    del outbound["Bcc"]
-                self.imap.append_sent(connection, sent_folder, outbound.as_bytes(policy=default))
-                sent_copy = "appended"
-            self.audit.set_state(reservation.key, "sent")
-            self.audit.record(
-                draft=reference,
-                message_id=message_id,
-                recipients=recipients,
-                subject=subject,
-                content_hash=content_hash,
-                outcome="sent",
-            )
-            self.imap.safe_delete(selected, reference.uid)
+            try:
+                if not self.imap.contains_message_id(connection, sent_folder, message_id):
+                    outbound = deepcopy(message)
+                    if "Bcc" in outbound:
+                        del outbound["Bcc"]
+                    self.imap.append_sent(
+                        connection, sent_folder, outbound.as_bytes(policy=default)
+                    )
+                    sent_copy = "appended"
+                self.audit.set_state(reservation.key, "sent")
+                self.audit.record(
+                    draft=reference,
+                    message_id=message_id,
+                    recipients=recipients,
+                    subject=subject,
+                    content_hash=content_hash,
+                    outcome="sent",
+                )
+                # Sent reconciliation selects a different mailbox on this
+                # connection, so re-select the draft before expunging its UID.
+                selected = self.imap.select(connection, reference.folder, readonly=False)
+                if selected.uid_validity != reference.uid_validity:
+                    raise MailboxError("Draft changed while sending")
+                self.imap.safe_delete(selected, reference.uid)
+            except Exception:
+                self.audit.set_state(reservation.key, "unknown")
+                self.audit.record(
+                    draft=reference,
+                    message_id=message_id,
+                    recipients=recipients,
+                    subject=subject,
+                    content_hash=content_hash,
+                    outcome="unknown",
+                    error_code="post_delivery_reconciliation_error",
+                )
+                return SendResult(success=False, status="unknown", message_id=message_id)
             return SendResult(
                 success=True, status="sent", message_id=message_id, sent_copy=sent_copy
             )

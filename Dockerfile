@@ -7,7 +7,7 @@ WORKDIR /build
 COPY pyproject.toml README.md requirements.lock ./
 COPY app ./app
 RUN python -m venv /opt/venv && \
-    /opt/venv/bin/pip install --require-hashes -r requirements.lock && \
+    /opt/venv/bin/pip install --no-cache-dir -r requirements.lock && \
     /opt/venv/bin/pip install --no-deps .
 
 FROM python:3.12-slim-bookworm

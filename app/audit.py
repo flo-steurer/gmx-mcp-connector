@@ -25,7 +25,16 @@ class AuditLedger:
         self.path = path
         self._lock = threading.Lock()
         parent = Path(path).parent
-        parent.mkdir(parents=True, exist_ok=True)
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # /data is the Docker volume. During local runs the example
+            # configuration may still point there, so use project-local data.
+            if path == "/data/audit.db" and not Path("/.dockerenv").exists():
+                self.path = str(Path.cwd() / "data" / "audit.db")
+                Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+            else:
+                raise
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:

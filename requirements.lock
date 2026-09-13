@@ -1,0 +1,5 @@
+certifi==2026.7.22
+mcp==2.2.0
+pydantic==2.12.5
+starlette==0.48.0
+uvicorn==0.37.0
